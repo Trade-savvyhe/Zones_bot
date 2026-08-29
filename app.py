@@ -57,6 +57,9 @@ if "db_initialized" not in st.session_state:
     st.session_state.zones = db.get("zones", DEFAULT_DATA["zones"])
     st.session_state.db_initialized = True
 
+if "editing_zone_id" not in st.session_state:
+    st.session_state.editing_zone_id = None
+
 # 3. Mobile Responsive Dark Theme CSS
 st.markdown("""
 <style>
@@ -230,11 +233,20 @@ st.markdown("""
     .status-pill.win { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
     .status-pill.loss { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
 
-    /* Button Tweaks */
+    .edit-box {
+        background: #141721;
+        border: 1px solid #3b82f6;
+        border-radius: 10px;
+        padding: 12px;
+        margin-top: 8px;
+        margin-bottom: 12px;
+    }
+
+    /* Button Styling */
     div.stButton > button {
         border-radius: 8px !important;
-        font-size: 0.78rem !important;
-        padding: 4px 8px !important;
+        font-size: 0.75rem !important;
+        padding: 4px 6px !important;
         font-weight: 600 !important;
     }
 
@@ -539,8 +551,8 @@ if filtered_zones:
             
             st.markdown(card_html, unsafe_allow_html=True)
 
-            # Persistent Action Buttons
-            btn_c1, btn_c2, btn_c3, btn_c4 = st.columns([1, 1, 1, 0.8])
+            # Persistent Action Buttons (Win, Loss, Edit, Reset, Del)
+            btn_c1, btn_c2, btn_c3, btn_c4, btn_c5 = st.columns([1, 1, 1, 1, 0.8])
             with btn_c1:
                 if st.button("🏆 Win", key=f"win_{zone['id']}", use_container_width=True):
                     zone["status"] = "WIN"
@@ -552,15 +564,59 @@ if filtered_zones:
                     save_data()
                     st.rerun()
             with btn_c3:
+                if st.button("✏️ Edit", key=f"edit_{zone['id']}", use_container_width=True):
+                    st.session_state.editing_zone_id = zone["id"] if st.session_state.editing_zone_id != zone["id"] else None
+                    st.rerun()
+            with btn_c4:
                 if st.button("↺ Reset", key=f"rst_{zone['id']}", use_container_width=True):
                     zone["status"] = "PENDING"
                     save_data()
                     st.rerun()
-            with btn_c4:
-                if st.button("✕ Del", key=f"del_{zone['id']}", use_container_width=True):
+            with btn_c5:
+                if st.button("✕", key=f"del_{zone['id']}", use_container_width=True):
                     st.session_state.zones = [z for z in st.session_state.zones if z["id"] != zone["id"]]
+                    if st.session_state.editing_zone_id == zone["id"]:
+                        st.session_state.editing_zone_id = None
                     save_data()
                     st.rerun()
+
+            # Inline Edit Form
+            if st.session_state.editing_zone_id == zone["id"]:
+                with st.container():
+                    st.markdown("<div class='edit-box'><b style='color:#38bdf8; font-size:0.85rem;'>✏️ Edit Zone Parameters</b>", unsafe_allow_html=True)
+                    with st.form(key=f"edit_form_{zone['id']}"):
+                        ch_idx = st.session_state.channels.index(zone["channel"]) if zone["channel"] in st.session_state.channels else 0
+                        asset_list = list(ASSET_MAP.keys())
+                        asset_idx = asset_list.index(zone["asset"]) if zone["asset"] in asset_list else 0
+                        type_idx = 0 if "BUY" in zone["type"] else 1
+
+                        e_ch = st.selectbox("Channel", st.session_state.channels, index=ch_idx)
+                        e_asset = st.selectbox("Asset Pair", asset_list, index=asset_idx)
+                        e_type = st.radio("Signal Bias", ["BUY ZONE", "SELL ZONE"], index=type_idx, horizontal=True)
+                        e_low = st.number_input("Zone Low Floor", value=float(zone["low"]), format="%.4f")
+                        e_high = st.number_input("Zone High Ceiling", value=float(zone["high"]), format="%.4f")
+                        
+                        save_c, cancel_c = st.columns(2)
+                        with save_c:
+                            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                                if e_high >= e_low > 0:
+                                    zone["channel"] = e_ch
+                                    zone["asset"] = e_asset
+                                    zone["type"] = e_type
+                                    zone["low"] = e_low
+                                    zone["high"] = e_high
+                                    zone["alerted"] = False
+                                    st.session_state.editing_zone_id = None
+                                    save_data()
+                                    st.success("Zone updated successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error("Ceiling must be >= Floor.")
+                        with cancel_c:
+                            if st.form_submit_button("Cancel", use_container_width=True):
+                                st.session_state.editing_zone_id = None
+                                st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
 
     # Browser Sound Alarm
     if zone_triggered:
