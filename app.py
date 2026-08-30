@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
-# 1. Page Configuration (Must be first Streamlit command)
+# 1. Page Configuration
 st.set_page_config(
     page_title="SIGNAL AI | Sentinel Terminal",
     page_icon="⚡",
@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Live Screen & Trigger Auto-Refresh (Every 5 seconds)
+# Live auto-refresh every 5 seconds
 st_autorefresh(interval=5000, key="terminal_refresher")
 
 # 2. Database Engine (JSON File Persistence)
@@ -289,33 +289,42 @@ ASSET_MAP = {
     "USD/JPY": {"sym": "JPY=X", "icon": "¥", "class": "forex"}
 }
 
-# 6. Real-Time Multi-Feed Market Engine
+# 6. Real-Time Multi-Feed Market Engine (US-Server Friendly)
 @st.cache_data(ttl=3)
 def fetch_live_data(tickers):
     prices = {}
     
-    # Live Real-Time Binance Crypto Stream
+    # 1. Real-Time Bitcoin (Coinbase + CoinCap fallback)
+    btc_p, btc_c = 0.0, 0.0
     try:
-        r = requests.get("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT", timeout=3)
-        if r.status_code == 200:
-            b_data = r.json()
-            prices["BTC/USD (Bitcoin)"] = {
-                "price": float(b_data["lastPrice"]),
-                "change": float(b_data["priceChangePercent"])
-            }
+        cb_res = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=2)
+        if cb_res.status_code == 200:
+            btc_p = float(cb_res.json()["data"]["amount"])
     except Exception:
-        prices["BTC/USD (Bitcoin)"] = {"price": 0.0, "change": 0.0}
+        pass
+        
+    if btc_p == 0.0:
+        try:
+            cc_res = requests.get("https://api.coincap.io/v2/assets/bitcoin", timeout=2)
+            if cc_res.status_code == 200:
+                data = cc_res.json()["data"]
+                btc_p = float(data["priceUsd"])
+                btc_c = float(data["changePercent24Hr"])
+        except Exception:
+            pass
 
-    # Direct Forex Spot Rate Stream
+    prices["BTC/USD (Bitcoin)"] = {"price": btc_p, "change": btc_c}
+
+    # 2. Real-Time Forex Spot Exchange Rates
     fx_rates = {}
     try:
-        fx_res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
+        fx_res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=2)
         if fx_res.status_code == 200:
             fx_rates = fx_res.json().get("rates", {})
     except Exception:
         pass
 
-    # Process Forex & Gold Pairs
+    # 3. Process Forex Pairs & Gold
     for label, item in tickers.items():
         if "Bitcoin" in label:
             continue
@@ -323,7 +332,6 @@ def fetch_live_data(tickers):
         cur = 0.0
         chg = 0.0
         
-        # Calculate real-time spot forex
         if label == "EUR/USD" and "EUR" in fx_rates and fx_rates["EUR"] > 0:
             cur = round(1.0 / fx_rates["EUR"], 5)
         elif label == "GBP/USD" and "GBP" in fx_rates and fx_rates["GBP"] > 0:
@@ -331,23 +339,15 @@ def fetch_live_data(tickers):
         elif label == "USD/JPY" and "JPY" in fx_rates:
             cur = round(float(fx_rates["JPY"]), 3)
             
-        # Spot Gold + Yahoo Tick / Weekend Settlement Fallback
+        # Spot Gold + Yahoo Weekend Settlement Fallback
         if cur == 0.0 or "Gold" in label:
             try:
-                t_sym = "XAUUSD=X" if "Gold" in label else item["sym"]
-                t = yf.Ticker(t_sym)
-                df = t.history(period="1d", interval="1m")
-                
+                t = yf.Ticker("GC=F" if "Gold" in label else item["sym"])
+                df = t.history(period="5d", interval="1d")
                 if not df.empty:
                     cur = float(df['Close'].iloc[-1])
-                    op = float(df['Open'].iloc[0])
-                    chg = ((cur - op) / op) * 100
-                else:
-                    df_daily = t.history(period="5d", interval="1d")
-                    if not df_daily.empty:
-                        cur = float(df_daily['Close'].iloc[-1])
-                        prev = float(df_daily['Close'].iloc[-2]) if len(df_daily) > 1 else cur
-                        chg = ((cur - prev) / prev) * 100
+                    prev = float(df['Close'].iloc[-2]) if len(df) > 1 else cur
+                    chg = ((cur - prev) / prev) * 100
             except Exception:
                 pass
                 
