@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
-# 1. Page Setup
+# 1. Page Configuration (Must be first Streamlit command)
 st.set_page_config(
     page_title="SIGNAL AI | Sentinel Terminal",
     page_icon="⚡",
@@ -16,19 +16,15 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Auto-refresh cycle (10 seconds)
-st_autorefresh(interval=10000, key="terminal_refresher")
+# Live Screen & Trigger Auto-Refresh (Every 5 seconds)
+st_autorefresh(interval=5000, key="terminal_refresher")
 
-# 2. JSON Persistence Engine
+# 2. Database Engine (JSON File Persistence)
 DATA_FILE = "zones_database.json"
 
 DEFAULT_DATA = {
     "channels": ["Gold Sniper VIP", "ICT Structure", "SMC Masters"],
-    "zones": [
-        {"id": 1, "channel": "Gold Sniper VIP", "asset": "XAU/USD (Gold)", "type": "BUY ZONE", "low": 4700.0, "high": 4705.0, "alerted": False, "status": "PENDING"},
-        {"id": 2, "channel": "ICT Structure", "asset": "XAU/USD (Gold)", "type": "SELL ZONE", "low": 4650.0, "high": 4655.0, "alerted": False, "status": "WIN"},
-        {"id": 3, "channel": "SMC Masters", "asset": "BTC/USD (Bitcoin)", "type": "BUY ZONE", "low": 76000.0, "high": 76500.0, "alerted": False, "status": "LOSS"},
-    ]
+    "zones": []
 }
 
 def load_data():
@@ -50,7 +46,7 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(payload, f, indent=4)
 
-# Initialize Persistent Session State
+# Initialize Session State
 if "db_initialized" not in st.session_state:
     db = load_data()
     st.session_state.channels = db.get("channels", DEFAULT_DATA["channels"])
@@ -60,7 +56,7 @@ if "db_initialized" not in st.session_state:
 if "editing_zone_id" not in st.session_state:
     st.session_state.editing_zone_id = None
 
-# 3. Mobile Responsive Dark Theme CSS
+# 3. Responsive Dark Theme CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700;800&display=swap');
@@ -68,13 +64,11 @@ st.markdown("""
     * { font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; box-sizing: border-box; }
     .stApp { background-color: #0c0d12 !important; color: #f1f5f9; }
 
-    /* Custom Glass Sidebar */
     section[data-testid="stSidebar"] {
         background: #11131a !important;
         border-right: 1px solid rgba(255, 255, 255, 0.05);
     }
 
-    /* Top Brand Navigation Bar */
     .top-nav {
         display: flex;
         justify-content: space-between;
@@ -106,7 +100,6 @@ st.markdown("""
         font-weight: 700;
     }
 
-    /* Performance Analytics Card */
     .stats-card {
         background: linear-gradient(180deg, #171923 0%, #12131b 100%);
         border: 1px solid rgba(255, 255, 255, 0.06);
@@ -115,7 +108,6 @@ st.markdown("""
         margin-bottom: 14px;
     }
 
-    /* Signal Cards */
     .signal-card {
         background: linear-gradient(180deg, #171923 0%, #12131b 100%);
         border: 1px solid rgba(255, 255, 255, 0.06);
@@ -136,7 +128,6 @@ st.markdown("""
         box-shadow: 0 0 15px rgba(239, 68, 68, 0.2);
     }
 
-    /* Card Details */
     .card-header-row {
         display: flex;
         justify-content: space-between;
@@ -242,7 +233,6 @@ st.markdown("""
         margin-bottom: 12px;
     }
 
-    /* Button Styling */
     div.stButton > button {
         border-radius: 8px !important;
         font-size: 0.75rem !important;
@@ -250,7 +240,6 @@ st.markdown("""
         font-weight: 600 !important;
     }
 
-    /* Mobile Responsive Media Queries */
     @media (max-width: 768px) {
         .brand-title { font-size: 1rem; }
         .data-item-val { font-size: 0.8rem; }
@@ -261,7 +250,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 4. Webhook Dispatch
+# 4. Webhook Dispatch Engine
 DEFAULT_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1543195984127856661/rgUCroi79KxyYjPfc00P7kEN_vK3pOYrxSWBRBN5ws22IeGtZ2eDGIWy22C5Lq4_HM5r"
 
 def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_price, low, high):
@@ -274,7 +263,7 @@ def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_pri
         "embeds": [
             {
                 "title": f"🚨 ZONE REACHED: {asset}",
-                "description": f"**Channel:** `{channel_name}`\n**Bias:** `{zone_type}`\nPrice entered zone.",
+                "description": f"**Channel:** `{channel_name}`\n**Bias:** `{zone_type}`\nPrice entered zone range.",
                 "color": color_code,
                 "fields": [
                     {"name": "Current Price", "value": f"`${cur_price:,.2f}`" if "Gold" in asset or "BTC" in asset else f"`{cur_price:.5f}`", "inline": True},
@@ -291,7 +280,7 @@ def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_pri
     except Exception:
         return False
 
-# 5. Market Asset Map
+# 5. Asset Registry
 ASSET_MAP = {
     "XAU/USD (Gold)": {"sym": "GC=F", "icon": "XAU", "class": "xau"},
     "BTC/USD (Bitcoin)": {"sym": "BTC-USD", "icon": "₿", "class": ""},
@@ -300,16 +289,84 @@ ASSET_MAP = {
     "USD/JPY": {"sym": "JPY=X", "icon": "¥", "class": "forex"}
 }
 
-# 6. Sidebar Controls
+# 6. Real-Time Multi-Feed Market Engine
+@st.cache_data(ttl=3)
+def fetch_live_data(tickers):
+    prices = {}
+    
+    # Live Real-Time Binance Crypto Stream
+    try:
+        r = requests.get("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT", timeout=3)
+        if r.status_code == 200:
+            b_data = r.json()
+            prices["BTC/USD (Bitcoin)"] = {
+                "price": float(b_data["lastPrice"]),
+                "change": float(b_data["priceChangePercent"])
+            }
+    except Exception:
+        prices["BTC/USD (Bitcoin)"] = {"price": 0.0, "change": 0.0}
+
+    # Direct Forex Spot Rate Stream
+    fx_rates = {}
+    try:
+        fx_res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
+        if fx_res.status_code == 200:
+            fx_rates = fx_res.json().get("rates", {})
+    except Exception:
+        pass
+
+    # Process Forex & Gold Pairs
+    for label, item in tickers.items():
+        if "Bitcoin" in label:
+            continue
+            
+        cur = 0.0
+        chg = 0.0
+        
+        # Calculate real-time spot forex
+        if label == "EUR/USD" and "EUR" in fx_rates and fx_rates["EUR"] > 0:
+            cur = round(1.0 / fx_rates["EUR"], 5)
+        elif label == "GBP/USD" and "GBP" in fx_rates and fx_rates["GBP"] > 0:
+            cur = round(1.0 / fx_rates["GBP"], 5)
+        elif label == "USD/JPY" and "JPY" in fx_rates:
+            cur = round(float(fx_rates["JPY"]), 3)
+            
+        # Spot Gold + Yahoo Tick / Weekend Settlement Fallback
+        if cur == 0.0 or "Gold" in label:
+            try:
+                t_sym = "XAUUSD=X" if "Gold" in label else item["sym"]
+                t = yf.Ticker(t_sym)
+                df = t.history(period="1d", interval="1m")
+                
+                if not df.empty:
+                    cur = float(df['Close'].iloc[-1])
+                    op = float(df['Open'].iloc[0])
+                    chg = ((cur - op) / op) * 100
+                else:
+                    df_daily = t.history(period="5d", interval="1d")
+                    if not df_daily.empty:
+                        cur = float(df_daily['Close'].iloc[-1])
+                        prev = float(df_daily['Close'].iloc[-2]) if len(df_daily) > 1 else cur
+                        chg = ((cur - prev) / prev) * 100
+            except Exception:
+                pass
+                
+        prices[label] = {"price": cur, "change": chg}
+        
+    return prices
+
+live_data = fetch_live_data(ASSET_MAP)
+
+# 7. Sidebar Controls
 with st.sidebar:
     st.markdown("<h3 style='margin:0;'>⚡ Terminal Command</h3>", unsafe_allow_html=True)
     st.caption("Channel feeds & zone triggers")
     st.markdown("---")
 
-    # Add Zone
+    # Deploy Zone
     with st.expander("➕ Deploy New Zone Card", expanded=True):
         with st.form("new_zone_form", clear_on_submit=True):
-            sel_ch = st.selectbox("Channel", st.session_state.channels)
+            sel_ch = st.selectbox("Channel", st.session_state.channels) if st.session_state.channels else st.selectbox("Channel", ["General"])
             sel_asset = st.selectbox("Asset Pair", list(ASSET_MAP.keys()))
             sel_type = st.radio("Signal Bias", ["BUY ZONE", "SELL ZONE"], horizontal=True)
             in_low = st.number_input("Zone Low Floor", min_value=0.0001, format="%.4f")
@@ -354,35 +411,14 @@ with st.sidebar:
                     save_data()
                     st.rerun()
 
-    # Discord Webhook
+    # Discord Settings
     with st.expander("🔔 Discord Webhook", expanded=False):
         discord_webhook = st.text_input("Webhook URL", value=DEFAULT_DISCORD_WEBHOOK, type="password")
         if st.button("🚀 Test Discord Ping", use_container_width=True):
             send_discord_rich_alert(discord_webhook, "Test Node", "XAU/USD (Gold)", "BUY ZONE", 4529.0, 4520.0, 4535.0)
             st.success("Dispatched!")
 
-# 7. Live Market Data
-@st.cache_data(ttl=8)
-def fetch_live_data(tickers):
-    prices = {}
-    for label, item in tickers.items():
-        try:
-            t = yf.Ticker(item["sym"])
-            df = t.history(period="1d", interval="1m")
-            if not df.empty:
-                cur = float(df['Close'].iloc[-1])
-                op = float(df['Open'].iloc[0])
-                chg = ((cur - op) / op) * 100
-                prices[label] = {"price": cur, "change": chg}
-            else:
-                prices[label] = {"price": 0.0, "change": 0.0}
-        except Exception:
-            prices[label] = {"price": 0.0, "change": 0.0}
-    return prices
-
-live_data = fetch_live_data(ASSET_MAP)
-
-# 8. Navigation Bar
+# 8. Top Navigation Bar
 st.markdown(f"""
 <div class="top-nav">
     <div class="brand-title">
@@ -396,7 +432,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 9. Top Metrics Ticker Bar
+# 9. Real-Time Price Strip
 p_cols = st.columns(len(ASSET_MAP))
 for idx, (asset_label, data) in enumerate(live_data.items()):
     with p_cols[idx]:
@@ -414,7 +450,7 @@ chosen_filter = st.selectbox("🎯 Channel Filter:", filter_opts)
 
 filtered_zones = st.session_state.zones if chosen_filter == "All Channels" else [z for z in st.session_state.zones if z.get("channel") == chosen_filter]
 
-# 11. Performance Metrics
+# 11. Performance Win/Loss Donut & Summary
 total_wins = sum(1 for z in filtered_zones if z.get("status") == "WIN")
 total_losses = sum(1 for z in filtered_zones if z.get("status") == "LOSS")
 total_completed = total_wins + total_losses
@@ -474,7 +510,6 @@ if filtered_zones:
         cur_price = live_data.get(zone["asset"], {}).get("price", 0.0)
         in_zone = zone["low"] <= cur_price <= zone["high"]
 
-        # Proximity percentage calculation
         mid = (zone["low"] + zone["high"]) / 2
         spread = max(abs(zone["high"] - zone["low"]), 1.0)
         dist = abs(cur_price - mid)
@@ -501,7 +536,6 @@ if filtered_zones:
             zone["alerted"] = False
             save_data()
 
-        # Visual States
         if zone.get("status") == "WIN":
             card_class = "signal-card win-card"
             status_tag = '<span class="status-pill win">🏆 WIN TRADE</span>'
@@ -551,7 +585,6 @@ if filtered_zones:
             
             st.markdown(card_html, unsafe_allow_html=True)
 
-            # Persistent Action Buttons (Win, Loss, Edit, Reset, Del)
             btn_c1, btn_c2, btn_c3, btn_c4, btn_c5 = st.columns([1, 1, 1, 1, 0.8])
             with btn_c1:
                 if st.button("🏆 Win", key=f"win_{zone['id']}", use_container_width=True):
@@ -580,7 +613,6 @@ if filtered_zones:
                     save_data()
                     st.rerun()
 
-            # Inline Edit Form
             if st.session_state.editing_zone_id == zone["id"]:
                 with st.container():
                     st.markdown("<div class='edit-box'><b style='color:#38bdf8; font-size:0.85rem;'>✏️ Edit Zone Parameters</b>", unsafe_allow_html=True)
@@ -618,7 +650,6 @@ if filtered_zones:
                                 st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Browser Sound Alarm
     if zone_triggered:
         st.markdown("""
         <audio autoplay>
