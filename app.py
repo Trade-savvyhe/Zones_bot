@@ -16,8 +16,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Live auto-refresh every 5 seconds
-st_autorefresh(interval=5000, key="terminal_refresher")
+# Live auto-refresh every 3 seconds (3000 ms)
+st_autorefresh(interval=3000, key="terminal_refresher")
 
 # 2. Database Engine (JSON File Persistence)
 DATA_FILE = "zones_database.json"
@@ -275,7 +275,7 @@ def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_pri
         ]
     }
     try:
-        res = requests.post(webhook_url, json=embed_data, timeout=5)
+        res = requests.post(webhook_url, json=embed_data, timeout=3)
         return res.status_code in [200, 204]
     except Exception:
         return False
@@ -289,8 +289,8 @@ ASSET_MAP = {
     "USD/JPY": {"sym": "JPY=X", "icon": "¥", "class": "forex"}
 }
 
-# 6. Real-Time Multi-Feed Market Engine (US-Server Friendly)
-@st.cache_data(ttl=3)
+# 6. Real-Time Multi-Feed Market Engine (3-Second TTL Cache)
+@st.cache_data(ttl=2)
 def fetch_live_data(tickers):
     prices = {}
     
