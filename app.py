@@ -16,10 +16,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Live auto-refresh every 3 seconds (3000 ms)
-st_autorefresh(interval=3000, key="terminal_refresher")
+# 1-second auto-refresh (1000 ms)
+st_autorefresh(interval=1000, key="terminal_refresher_1s")
 
+# ============================================================
 # 2. Database Engine (JSON File Persistence)
+# ============================================================
 DATA_FILE = "zones_database.json"
 
 DEFAULT_DATA = {
@@ -56,7 +58,9 @@ if "db_initialized" not in st.session_state:
 if "editing_zone_id" not in st.session_state:
     st.session_state.editing_zone_id = None
 
+# ============================================================
 # 3. Responsive Dark Theme CSS
+# ============================================================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700;800&display=swap');
@@ -250,8 +254,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 4. Webhook Dispatch Engine
+# ============================================================
+# 4. Configuration & Webhooks
+# ============================================================
 DEFAULT_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1543195984127856661/rgUCroi79KxyYjPfc00P7kEN_vK3pOYrxSWBRBN5ws22IeGtZ2eDGIWy22C5Lq4_HM5r"
+GOLD_API_KEY = "goldapi-c19928895f4d2b08f77ae252be11fb79-io"
 
 def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_price, low, high):
     if not webhook_url:
@@ -280,21 +287,25 @@ def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_pri
     except Exception:
         return False
 
+# ============================================================
 # 5. Asset Registry
+# ============================================================
 ASSET_MAP = {
-    "XAU/USD (Gold)": {"sym": "GC=F", "icon": "XAU", "class": "xau"},
     "BTC/USD (Bitcoin)": {"sym": "BTC-USD", "icon": "₿", "class": ""},
+    "XAU/USD (Gold)": {"sym": "GC=F", "icon": "XAU", "class": "xau"},
     "EUR/USD": {"sym": "EURUSD=X", "icon": "€", "class": "forex"},
     "GBP/USD": {"sym": "GBPUSD=X", "icon": "£", "class": "forex"},
     "USD/JPY": {"sym": "JPY=X", "icon": "¥", "class": "forex"}
 }
 
-# 6. Real-Time Multi-Feed Market Engine (3-Second TTL Cache)
-@st.cache_data(ttl=2)
-def fetch_live_data(tickers):
+# ============================================================
+# 6. Real-Time Multi-Feed Engine (GoldAPI + Spot Forex + Crypto)
+# ============================================================
+@st.cache_data(ttl=1)
+def fetch_live_data(tickers, gold_key):
     prices = {}
     
-    # 1. Real-Time Bitcoin (Coinbase + CoinCap fallback)
+    # 1. Real-Time Bitcoin (Coinbase + CoinCap)
     btc_p, btc_c = 0.0, 0.0
     try:
         cb_res = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=2)
@@ -315,7 +326,34 @@ def fetch_live_data(tickers):
 
     prices["BTC/USD (Bitcoin)"] = {"price": btc_p, "change": btc_c}
 
-    # 2. Real-Time Forex Spot Exchange Rates
+    # 2. Live Spot Gold via GoldAPI.io (Exact Broker Rate)
+    xau_price, xau_chg = 0.0, 0.0
+    if gold_key:
+        try:
+            headers = {"x-access-token": gold_key.strip(), "Content-Type": "application/json"}
+            res = requests.get("https://www.goldapi.io/api/XAU/USD", headers=headers, timeout=2)
+            if res.status_code == 200:
+                g_data = res.json()
+                xau_price = float(g_data.get("price", 0.0))
+                xau_chg = float(g_data.get("chp", 0.0))
+        except Exception:
+            pass
+
+    # Spot Gold Fallback if API limit or idle
+    if xau_price == 0.0:
+        try:
+            t = yf.Ticker("XAUUSD=X")
+            df_1m = t.history(period="1d", interval="1m")
+            if not df_1m.empty:
+                xau_price = float(df_1m['Close'].iloc[-1])
+                prev = float(df_1m['Close'].iloc[0])
+                xau_chg = ((xau_price - prev) / prev) * 100
+        except Exception:
+            pass
+
+    prices["XAU/USD (Gold)"] = {"price": xau_price, "change": xau_chg}
+
+    # 3. Real-Time Spot Forex Rates
     fx_rates = {}
     try:
         fx_res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=2)
@@ -324,9 +362,8 @@ def fetch_live_data(tickers):
     except Exception:
         pass
 
-    # 3. Process Forex Pairs & Gold
     for label, item in tickers.items():
-        if "Bitcoin" in label:
+        if "Bitcoin" in label or "Gold" in label:
             continue
             
         cur = 0.0
@@ -338,15 +375,14 @@ def fetch_live_data(tickers):
             cur = round(1.0 / fx_rates["GBP"], 5)
         elif label == "USD/JPY" and "JPY" in fx_rates:
             cur = round(float(fx_rates["JPY"]), 3)
-            
-        # Spot Gold + Yahoo Weekend Settlement Fallback
-        if cur == 0.0 or "Gold" in label:
+
+        if cur == 0.0:
             try:
-                t = yf.Ticker("GC=F" if "Gold" in label else item["sym"])
-                df = t.history(period="5d", interval="1d")
+                t = yf.Ticker(item["sym"])
+                df = t.history(period="2d", interval="1m")
                 if not df.empty:
                     cur = float(df['Close'].iloc[-1])
-                    prev = float(df['Close'].iloc[-2]) if len(df) > 1 else cur
+                    prev = float(df['Close'].iloc[0])
                     chg = ((cur - prev) / prev) * 100
             except Exception:
                 pass
@@ -355,9 +391,11 @@ def fetch_live_data(tickers):
         
     return prices
 
-live_data = fetch_live_data(ASSET_MAP)
+live_data = fetch_live_data(ASSET_MAP, GOLD_API_KEY)
 
+# ============================================================
 # 7. Sidebar Controls
+# ============================================================
 with st.sidebar:
     st.markdown("<h3 style='margin:0;'>⚡ Terminal Command</h3>", unsafe_allow_html=True)
     st.caption("Channel feeds & zone triggers")
@@ -415,10 +453,12 @@ with st.sidebar:
     with st.expander("🔔 Discord Webhook", expanded=False):
         discord_webhook = st.text_input("Webhook URL", value=DEFAULT_DISCORD_WEBHOOK, type="password")
         if st.button("🚀 Test Discord Ping", use_container_width=True):
-            send_discord_rich_alert(discord_webhook, "Test Node", "XAU/USD (Gold)", "BUY ZONE", 4529.0, 4520.0, 4535.0)
+            send_discord_rich_alert(discord_webhook, "Test Node", "XAU/USD (Gold)", "BUY ZONE", 4447.23, 4440.0, 4450.0)
             st.success("Dispatched!")
 
+# ============================================================
 # 8. Top Navigation Bar
+# ============================================================
 st.markdown(f"""
 <div class="top-nav">
     <div class="brand-title">
@@ -426,13 +466,15 @@ st.markdown(f"""
         SIGNAL AI <span style="color:#64748b; font-size:0.75rem; font-weight:500;">/ Sentinel Matrix</span>
     </div>
     <div style="display:flex; gap:8px; align-items:center;">
-        <div class="nav-pill">LIVE FEED</div>
+        <div class="nav-pill">LIVE FEED 1S</div>
         <div style="color:#64748b; font-size:0.75rem; font-family:'JetBrains Mono';">{datetime.now().strftime('%H:%M:%S')}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
+# ============================================================
 # 9. Real-Time Price Strip
+# ============================================================
 p_cols = st.columns(len(ASSET_MAP))
 for idx, (asset_label, data) in enumerate(live_data.items()):
     with p_cols[idx]:
@@ -444,13 +486,17 @@ for idx, (asset_label, data) in enumerate(live_data.items()):
 
 st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
+# ============================================================
 # 10. Channel Filter
+# ============================================================
 filter_opts = ["All Channels"] + st.session_state.channels
 chosen_filter = st.selectbox("🎯 Channel Filter:", filter_opts)
 
 filtered_zones = st.session_state.zones if chosen_filter == "All Channels" else [z for z in st.session_state.zones if z.get("channel") == chosen_filter]
 
+# ============================================================
 # 11. Performance Win/Loss Donut & Summary
+# ============================================================
 total_wins = sum(1 for z in filtered_zones if z.get("status") == "WIN")
 total_losses = sum(1 for z in filtered_zones if z.get("status") == "LOSS")
 total_completed = total_wins + total_losses
@@ -501,7 +547,9 @@ with stat_c2:
     </div>
     """, unsafe_allow_html=True)
 
+# ============================================================
 # 12. Signal Feed Grid
+# ============================================================
 if filtered_zones:
     cols = st.columns(3)
     zone_triggered = False
