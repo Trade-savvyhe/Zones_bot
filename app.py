@@ -1,5 +1,4 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import requests
 import json
@@ -7,17 +6,20 @@ import os
 import plotly.graph_objects as go
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
+import MetaTrader5 as mt5
 
-# 1. Page Configuration
+# ============================================================
+# 1. Page Configuration & 1-Second Auto-Refresh
+# ============================================================
 st.set_page_config(
-    page_title="SIGNAL AI | Sentinel Terminal",
+    page_title="SIGNAL AI | Sentinel Terminal (MT5 Live)",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # 1-second auto-refresh (1000 ms)
-st_autorefresh(interval=1000, key="terminal_refresher_1s")
+st_autorefresh(interval=1000, key="terminal_refresher_mt5_1s")
 
 # ============================================================
 # 2. Database Engine (JSON File Persistence)
@@ -48,7 +50,6 @@ def save_data():
     with open(DATA_FILE, "w") as f:
         json.dump(payload, f, indent=4)
 
-# Initialize Session State
 if "db_initialized" not in st.session_state:
     db = load_data()
     st.session_state.channels = db.get("channels", DEFAULT_DATA["channels"])
@@ -59,7 +60,7 @@ if "editing_zone_id" not in st.session_state:
     st.session_state.editing_zone_id = None
 
 # ============================================================
-# 3. Responsive Dark Theme CSS
+# 3. Custom CSS Theme
 # ============================================================
 st.markdown("""
 <style>
@@ -95,9 +96,9 @@ st.markdown("""
         gap: 8px;
     }
     .nav-pill {
-        background: rgba(255, 75, 43, 0.12);
-        border: 1px solid rgba(255, 75, 43, 0.35);
-        color: #ff6b4a;
+        background: rgba(46, 204, 113, 0.12);
+        border: 1px solid rgba(46, 204, 113, 0.35);
+        color: #2ecc71;
         padding: 4px 10px;
         border-radius: 20px;
         font-size: 0.72rem;
@@ -180,14 +181,15 @@ st.markdown("""
         font-size: 0.65rem;
     }
 
-    .data-grid {
+    .data-grid-4 {
         display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
+        grid-template-columns: 1fr 1fr 1fr 1fr;
+        gap: 6px;
         margin: 10px 0;
         text-align: left;
     }
-    .data-item-label { font-size: 0.62rem; color: #64748b; font-weight: 600; }
-    .data-item-val { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 0.9rem; color: #f8fafc; }
+    .data-item-label { font-size: 0.60rem; color: #64748b; font-weight: 600; }
+    .data-item-val { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 0.85rem; color: #f8fafc; }
 
     .bar-bg {
         background: rgba(255, 255, 255, 0.06);
@@ -246,38 +248,40 @@ st.markdown("""
 
     @media (max-width: 768px) {
         .brand-title { font-size: 1rem; }
-        .data-item-val { font-size: 0.8rem; }
+        .data-item-val { font-size: 0.75rem; }
         .proximity-percent { font-size: 1rem; }
-        .data-grid { gap: 4px; }
         .stats-card { padding: 12px; }
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ============================================================
-# 4. Configuration & Webhooks
+# 4. Configuration & Webhook Alerts
 # ============================================================
-DEFAULT_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1543195984127856661/rgUCroi79KxyYjPfc00P7kEN_vK3pOYrxSWBRBN5ws22IeGtZ2eDGIWy22C5Lq4_HM5r"
-GOLD_API_KEY = "goldapi-c19928895f4d2b08f77ae252be11fb79-io"
+DEFAULT_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1544228491359420467/gwDR8Xiu8pFPXg8bZOCAcfZ8h-hRs8Xcj3SGVRzl8MbY-DmnidIwQUf7idO29-UR6cqL"
 
-def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_price, low, high):
+def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_price, low, high, sl):
     if not webhook_url:
         return False
     color_code = 3447003 if "BUY" in zone_type else 15158332
+    price_str = f"${cur_price:,.2f}" if "Gold" in asset or "BTC" in asset else f"{cur_price:.5f}"
+    sl_str = f"${sl:,.2f}" if "Gold" in asset or "BTC" in asset else f"{sl:.5f}"
+    
     embed_data = {
         "username": "Apex Signal AI",
         "avatar_url": "https://cdn-icons-png.flaticon.com/512/2620/2620600.png",
         "embeds": [
             {
                 "title": f"🚨 ZONE REACHED: {asset}",
-                "description": f"**Channel:** `{channel_name}`\n**Bias:** `{zone_type}`\nPrice entered zone range.",
+                "description": f"**Channel:** `{channel_name}`\n**Bias:** `{zone_type}`\nPrice triggered active zone range.",
                 "color": color_code,
                 "fields": [
-                    {"name": "Current Price", "value": f"`${cur_price:,.2f}`" if "Gold" in asset or "BTC" in asset else f"`{cur_price:.5f}`", "inline": True},
+                    {"name": "Current Price", "value": f"`{price_str}`", "inline": True},
                     {"name": "Zone Bounds", "value": f"`{low} - {high}`", "inline": True},
+                    {"name": "Stop Loss (SL)", "value": f"**`{sl_str}`**" if sl > 0 else "`Not Set`", "inline": True},
                     {"name": "Channel", "value": f"`{channel_name}`", "inline": True}
                 ],
-                "footer": {"text": f"Signal AI • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}
+                "footer": {"text": f"Signal AI (Local MT5) • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"}
             }
         ]
     }
@@ -288,127 +292,77 @@ def send_discord_rich_alert(webhook_url, channel_name, asset, zone_type, cur_pri
         return False
 
 # ============================================================
-# 5. Asset Registry
+# 5. Asset Registry (Mapped to Broker MT5 Symbols)
 # ============================================================
 ASSET_MAP = {
-    "BTC/USD (Bitcoin)": {"sym": "BTC-USD", "icon": "₿", "class": ""},
-    "XAU/USD (Gold)": {"sym": "GC=F", "icon": "XAU", "class": "xau"},
-    "EUR/USD": {"sym": "EURUSD=X", "icon": "€", "class": "forex"},
-    "GBP/USD": {"sym": "GBPUSD=X", "icon": "£", "class": "forex"},
-    "USD/JPY": {"sym": "JPY=X", "icon": "¥", "class": "forex"}
+    "BTC/USD (Bitcoin)": {"symbols": ["BTCUSDm", "BTCUSD", "BTC/USD"], "icon": "₿", "class": "", "digits": 2},
+    "XAU/USD (Gold)": {"symbols": ["XAUUSDm", "XAUUSD", "GOLD"], "icon": "XAU", "class": "xau", "digits": 2},
+    "EUR/USD": {"symbols": ["EURUSDm", "EURUSD"], "icon": "€", "class": "forex", "digits": 5},
+    "GBP/USD": {"symbols": ["GBPUSDm", "GBPUSD"], "icon": "£", "class": "forex", "digits": 5},
+    "USD/JPY": {"symbols": ["USDJPYm", "USDJPY"], "icon": "¥", "class": "forex", "digits": 3}
 }
 
 # ============================================================
-# 6. Real-Time Multi-Feed Engine (GoldAPI + Spot Forex + Crypto)
+# 6. MetaTrader 5 Engine
 # ============================================================
-@st.cache_data(ttl=1)
-def fetch_live_data(tickers, gold_key):
-    prices = {}
-    
-    # 1. Real-Time Bitcoin (Coinbase + CoinCap)
-    btc_p, btc_c = 0.0, 0.0
-    try:
-        cb_res = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot", timeout=2)
-        if cb_res.status_code == 200:
-            btc_p = float(cb_res.json()["data"]["amount"])
-    except Exception:
-        pass
-        
-    if btc_p == 0.0:
-        try:
-            cc_res = requests.get("https://api.coincap.io/v2/assets/bitcoin", timeout=2)
-            if cc_res.status_code == 200:
-                data = cc_res.json()["data"]
-                btc_p = float(data["priceUsd"])
-                btc_c = float(data["changePercent24Hr"])
-        except Exception:
-            pass
+def init_mt5():
+    if not mt5.initialize():
+        return False
+    return True
 
-    prices["BTC/USD (Bitcoin)"] = {"price": btc_p, "change": btc_c}
+mt5_active = init_mt5()
 
-    # 2. Live Spot Gold via GoldAPI.io (Exact Broker Rate)
-    xau_price, xau_chg = 0.0, 0.0
-    if gold_key:
-        try:
-            headers = {"x-access-token": gold_key.strip(), "Content-Type": "application/json"}
-            res = requests.get("https://www.goldapi.io/api/XAU/USD", headers=headers, timeout=2)
-            if res.status_code == 200:
-                g_data = res.json()
-                xau_price = float(g_data.get("price", 0.0))
-                xau_chg = float(g_data.get("chp", 0.0))
-        except Exception:
-            pass
+def get_symbol_price(symbol_candidates):
+    if not mt5_active:
+        if not mt5.initialize():
+            return 0.0, 0.0
 
-    # Spot Gold Fallback if API limit or idle
-    if xau_price == 0.0:
-        try:
-            t = yf.Ticker("XAUUSD=X")
-            df_1m = t.history(period="1d", interval="1m")
-            if not df_1m.empty:
-                xau_price = float(df_1m['Close'].iloc[-1])
-                prev = float(df_1m['Close'].iloc[0])
-                xau_chg = ((xau_price - prev) / prev) * 100
-        except Exception:
-            pass
-
-    prices["XAU/USD (Gold)"] = {"price": xau_price, "change": xau_chg}
-
-    # 3. Real-Time Spot Forex Rates
-    fx_rates = {}
-    try:
-        fx_res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=2)
-        if fx_res.status_code == 200:
-            fx_rates = fx_res.json().get("rates", {})
-    except Exception:
-        pass
-
-    for label, item in tickers.items():
-        if "Bitcoin" in label or "Gold" in label:
-            continue
+    for sym in symbol_candidates:
+        mt5.symbol_select(sym, True)
+        tick = mt5.symbol_info_tick(sym)
+        if tick is not None and tick.ask > 0:
+            price = (tick.bid + tick.ask) / 2.0
             
-        cur = 0.0
-        chg = 0.0
-        
-        if label == "EUR/USD" and "EUR" in fx_rates and fx_rates["EUR"] > 0:
-            cur = round(1.0 / fx_rates["EUR"], 5)
-        elif label == "GBP/USD" and "GBP" in fx_rates and fx_rates["GBP"] > 0:
-            cur = round(1.0 / fx_rates["GBP"], 5)
-        elif label == "USD/JPY" and "JPY" in fx_rates:
-            cur = round(float(fx_rates["JPY"]), 3)
+            rates = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_D1, 0, 2)
+            chg = 0.0
+            if rates is not None and len(rates) >= 2:
+                prev_close = rates[0]['close']
+                if prev_close > 0:
+                    chg = ((price - prev_close) / prev_close) * 100
+            return price, chg
+    return 0.0, 0.0
 
-        if cur == 0.0:
-            try:
-                t = yf.Ticker(item["sym"])
-                df = t.history(period="2d", interval="1m")
-                if not df.empty:
-                    cur = float(df['Close'].iloc[-1])
-                    prev = float(df['Close'].iloc[0])
-                    chg = ((cur - prev) / prev) * 100
-            except Exception:
-                pass
-                
-        prices[label] = {"price": cur, "change": chg}
-        
-    return prices
+def fetch_live_terminal_data():
+    live_prices = {}
+    for asset_label, config in ASSET_MAP.items():
+        price, change = get_symbol_price(config["symbols"])
+        live_prices[asset_label] = {"price": price, "change": change}
+    return live_prices
 
-live_data = fetch_live_data(ASSET_MAP, GOLD_API_KEY)
+live_data = fetch_live_terminal_data()
 
 # ============================================================
 # 7. Sidebar Controls
 # ============================================================
 with st.sidebar:
     st.markdown("<h3 style='margin:0;'>⚡ Terminal Command</h3>", unsafe_allow_html=True)
-    st.caption("Channel feeds & zone triggers")
+    st.caption("Local Exness MT5 Sync")
     st.markdown("---")
 
-    # Deploy Zone
+    # Deploy Zone Form
     with st.expander("➕ Deploy New Zone Card", expanded=True):
         with st.form("new_zone_form", clear_on_submit=True):
             sel_ch = st.selectbox("Channel", st.session_state.channels) if st.session_state.channels else st.selectbox("Channel", ["General"])
             sel_asset = st.selectbox("Asset Pair", list(ASSET_MAP.keys()))
             sel_type = st.radio("Signal Bias", ["BUY ZONE", "SELL ZONE"], horizontal=True)
-            in_low = st.number_input("Zone Low Floor", min_value=0.0001, format="%.4f")
-            in_high = st.number_input("Zone High Ceiling", min_value=0.0001, format="%.4f")
+            
+            c_low, c_high = st.columns(2)
+            with c_low:
+                in_low = st.number_input("Zone Low", min_value=0.0001, format="%.4f")
+            with c_high:
+                in_high = st.number_input("Zone High", min_value=0.0001, format="%.4f")
+                
+            in_sl = st.number_input("Stop Loss (SL)", min_value=0.0, value=0.0, format="%.4f", help="Set to 0 if no SL")
             
             if st.form_submit_button("Deploy Signal Card", use_container_width=True):
                 if in_high >= in_low > 0:
@@ -420,6 +374,7 @@ with st.sidebar:
                         "type": sel_type,
                         "low": in_low,
                         "high": in_high,
+                        "sl": in_sl,
                         "alerted": False,
                         "status": "PENDING"
                     })
@@ -427,7 +382,7 @@ with st.sidebar:
                     st.success("Zone deployed and saved!")
                     st.rerun()
                 else:
-                    st.error("Ceiling must be >= Floor.")
+                    st.error("Zone High must be >= Zone Low.")
 
     # Manage Channels
     with st.expander("📁 Manage Channels", expanded=False):
@@ -453,8 +408,9 @@ with st.sidebar:
     with st.expander("🔔 Discord Webhook", expanded=False):
         discord_webhook = st.text_input("Webhook URL", value=DEFAULT_DISCORD_WEBHOOK, type="password")
         if st.button("🚀 Test Discord Ping", use_container_width=True):
-            send_discord_rich_alert(discord_webhook, "Test Node", "XAU/USD (Gold)", "BUY ZONE", 4447.23, 4440.0, 4450.0)
-            st.success("Dispatched!")
+            current_xau = live_data["XAU/USD (Gold)"]["price"]
+            send_discord_rich_alert(discord_webhook, "Test Node", "XAU/USD (Gold)", "BUY ZONE", current_xau, current_xau - 5.0, current_xau + 5.0, current_xau - 10.0)
+            st.success("Dispatched to Discord!")
 
 # ============================================================
 # 8. Top Navigation Bar
@@ -466,7 +422,7 @@ st.markdown(f"""
         SIGNAL AI <span style="color:#64748b; font-size:0.75rem; font-weight:500;">/ Sentinel Matrix</span>
     </div>
     <div style="display:flex; gap:8px; align-items:center;">
-        <div class="nav-pill">LIVE FEED 1S</div>
+        <div class="nav-pill">MT5 LIVE EXNESS (1S)</div>
         <div style="color:#64748b; font-size:0.75rem; font-family:'JetBrains Mono';">{datetime.now().strftime('%H:%M:%S')}</div>
     </div>
 </div>
@@ -557,6 +513,7 @@ if filtered_zones:
     for idx, zone in enumerate(filtered_zones):
         cur_price = live_data.get(zone["asset"], {}).get("price", 0.0)
         in_zone = zone["low"] <= cur_price <= zone["high"]
+        sl_val = float(zone.get("sl", 0.0))
 
         mid = (zone["low"] + zone["high"]) / 2
         spread = max(abs(zone["high"] - zone["low"]), 1.0)
@@ -574,7 +531,8 @@ if filtered_zones:
                 zone["type"],
                 cur_price,
                 zone["low"],
-                zone["high"]
+                zone["high"],
+                sl_val
             )
             zone["alerted"] = True
             save_data()
@@ -604,6 +562,7 @@ if filtered_zones:
         bias_badge = '<span class="badge-buy">BUY</span>' if "BUY" in zone["type"] else '<span class="badge-sell">SELL</span>'
         asset_info = ASSET_MAP.get(zone["asset"], {"icon": "●", "class": ""})
         formatted_price = f"${cur_price:,.2f}" if "BTC" in zone["asset"] or "Gold" in zone["asset"] else f"{cur_price:.5f}"
+        formatted_sl = f"{sl_val}" if sl_val > 0 else "-"
 
         with cols[idx % 3]:
             card_html = (
@@ -618,10 +577,11 @@ if filtered_zones:
                 f'</div>'
                 f'<div>{bias_badge}</div>'
                 f'</div>'
-                f'<div class="data-grid">'
-                f'<div><div class="data-item-label">ZONE LOW</div><div class="data-item-val">{zone["low"]}</div></div>'
-                f'<div><div class="data-item-label">LIVE PRICE</div><div class="data-item-val" style="color:#ff6b4a;">{formatted_price}</div></div>'
-                f'<div><div class="data-item-label">ZONE HIGH</div><div class="data-item-val">{zone["high"]}</div></div>'
+                f'<div class="data-grid-4">'
+                f'<div><div class="data-item-label">LOW</div><div class="data-item-val">{zone["low"]}</div></div>'
+                f'<div><div class="data-item-label">LIVE</div><div class="data-item-val" style="color:#ff6b4a;">{formatted_price}</div></div>'
+                f'<div><div class="data-item-label">HIGH</div><div class="data-item-val">{zone["high"]}</div></div>'
+                f'<div><div class="data-item-label">SL</div><div class="data-item-val" style="color:#f87171;">{formatted_sl}</div></div>'
                 f'</div>'
                 f'<div class="bar-bg"><div class="bar-fill {bar_color_class}" style="width: {proximity}%;"></div></div>'
                 f'<div class="card-footer-row">'
@@ -673,8 +633,14 @@ if filtered_zones:
                         e_ch = st.selectbox("Channel", st.session_state.channels, index=ch_idx)
                         e_asset = st.selectbox("Asset Pair", asset_list, index=asset_idx)
                         e_type = st.radio("Signal Bias", ["BUY ZONE", "SELL ZONE"], index=type_idx, horizontal=True)
-                        e_low = st.number_input("Zone Low Floor", value=float(zone["low"]), format="%.4f")
-                        e_high = st.number_input("Zone High Ceiling", value=float(zone["high"]), format="%.4f")
+                        
+                        e_low_c, e_high_c, e_sl_c = st.columns(3)
+                        with e_low_c:
+                            e_low = st.number_input("Zone Low", value=float(zone["low"]), format="%.4f")
+                        with e_high_c:
+                            e_high = st.number_input("Zone High", value=float(zone["high"]), format="%.4f")
+                        with e_sl_c:
+                            e_sl = st.number_input("Stop Loss (SL)", value=float(zone.get("sl", 0.0)), format="%.4f")
                         
                         save_c, cancel_c = st.columns(2)
                         with save_c:
@@ -685,13 +651,14 @@ if filtered_zones:
                                     zone["type"] = e_type
                                     zone["low"] = e_low
                                     zone["high"] = e_high
+                                    zone["sl"] = e_sl
                                     zone["alerted"] = False
                                     st.session_state.editing_zone_id = None
                                     save_data()
                                     st.success("Zone updated successfully!")
                                     st.rerun()
                                 else:
-                                    st.error("Ceiling must be >= Floor.")
+                                    st.error("Zone High must be >= Zone Low.")
                         with cancel_c:
                             if st.form_submit_button("Cancel", use_container_width=True):
                                 st.session_state.editing_zone_id = None
